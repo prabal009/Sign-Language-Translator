@@ -13,6 +13,19 @@ A high-performance, intelligent desktop application designed to bridge communica
   * `SPACE` - Injects word breaks smoothly.
   * `BACKSPACE` - Instantly strips the last character dynamically without polluting the string.
   * `CLEAR_WORD` - Strips text backward directly to the previous space index to drop entire words instantly.
+  * now how every letter is represented , you can take help of the images underneath 
+<img width="740" height="740" alt="1" src="https://github.com/user-attachments/assets/b834f4a9-0003-4083-abf5-07d38aa5bd8e" />
+<img width="424" height="509" alt="2" src="https://github.com/user-attachments/assets/06e05815-47ac-4c15-ac5f-d01710418ea9" />
+<img width="600" height="460" alt="3" src="https://github.com/user-attachments/assets/8cba7724-aef0-4717-ab8b-5afeafebe38b" />
+also all the letters are represented with single hand ( only j and s requires the use of both hands )
+0 - both index fingers pointing upwards
+1 - both pinky fingers pointing upwards
+space - lay your palm facing towards ground
+backspace for a letter - use single hand middle finger pointing upwards
+backspace for a word - use both hand middle fingers pointing upwards
+
+
+
 
 ---
 
