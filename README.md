@@ -4,7 +4,7 @@ A high-performance, intelligent desktop application designed to bridge communica
 
 ---
 
-## 🚀 System Architecture Features
+##  System Architecture Features
 
 * **Multi-Threaded UI Control:** Powered by PyQt6, the camera stream and core ML inference engines run inside an independent background worker thread, ensuring the hardware-accelerated user interface remains lag-free at a fluid frame rate.
 * **Intelligent Hand Tracking:** Leverages Google MediaPipe's high-fidelity hand landmark pipelines to extract spatial tracking arrays.
@@ -29,7 +29,7 @@ backspace for a word - use both hand middle fingers pointing upwards
 
 ---
 
-## 🛠️ Installation & Setup
+##  Installation & Setup
 
 1. Clone the repository to your local workspace:
    ```bash
