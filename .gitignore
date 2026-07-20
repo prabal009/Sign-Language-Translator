@@ -1,0 +1,15 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Heavy ML Models & Datasets (Keep your repository light)
+models/best_sign_model.pkl
+*.csv
+*.pkl
+
+# IDE settings
+.vscode/
+.idea/
