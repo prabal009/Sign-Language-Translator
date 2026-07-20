@@ -51,9 +51,11 @@ pip install -r requirements.txt
 
 # 5. Launch the pre-trained real-time desktop interface directly
 python app.py
+```
 
 
  For macOS /  Linux
+```
 
 # 1. Clone the repository and navigate into the project directory
 git clone [https://github.com/prabal009/Sign-Language-Translator.git](https://github.com/prabal009/Sign-Language-Translator.git)
@@ -71,8 +73,10 @@ pip install -r requirements.txt
 
 # 5. Launch the pre-trained real-time desktop interface directly
 python app.py
+```
 
 Custom Pipeline Execution
+```
 
 # Step A: Collect custom data frames (Webcam records your structural gesture frames)
 python collect_data.py
