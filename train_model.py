@@ -1,87 +1,137 @@
+"""Train the optional, local custom gesture model from independent sessions."""
+
+import argparse
+from collections import Counter
+import json
 import os
-import pandas as pd
+from pathlib import Path
+import sys
+from tempfile import NamedTemporaryFile
+
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, classification_report
-import joblib
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
-from utils.config import DATASET_PATH, LABELS
+from utils.custom_gestures import (
+    ACTION_LABELS,
+    DESTRUCTIVE,
+    LABELS,
+    MODEL_LIMIT,
+    MODEL_NAME,
+    PREPROCESSING,
+    SCHEMA,
+    CustomGestureRecognizer,
+    Sample,
+    custom_eligible,
+)
+from utils.dataset import DatasetError, load_training_data
+from utils.model_assets import data_dir
 
-def train_pipeline():
-    print("🚀 Starting AI Training Pipeline...")
-    
-    # 1. Load Dataset (skipping the header row)
-    if not os.path.exists(DATASET_PATH):
-        raise FileNotFoundError(f"❌ Dataset not found at {DATASET_PATH}. Please run data collection first!")
-        
-    df = pd.read_csv(DATASET_PATH, header=None, skiprows=1)
-    print(f"📊 Dataset loaded successfully. Shape: {df.shape}")
-    
-    # Split features (X) and labels (y)
-    X = df.iloc[:, :-1].values
-    y = df.iloc[:, -1].values
-    
-    # 2. Train/Test Split (80% Train, 20% Test)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    print(f"📉 Data split: {len(X_train)} training samples, {len(X_test)} testing samples.")
-    
-    # 3. Define Models to Evaluate
-    models = {
-        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
-        "SVM": SVC(probability=True, kernel='rbf', C=1.0, random_state=42),
-        "KNN": KNeighborsClassifier(n_neighbors=5)
+_REJECT = "REJECT"
+
+
+def _fit_model(training: list[tuple[str, np.ndarray]]) -> Pipeline:
+    labels, features = zip(*training)
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("classifier", LogisticRegression(class_weight="balanced", max_iter=2000, random_state=42)),
+    ])
+    return pipeline.fit(np.stack(features), labels)
+
+
+def _parameters(pipeline: Pipeline) -> dict:
+    scaler = pipeline.named_steps["scaler"]
+    classifier = pipeline.named_steps["classifier"]
+    return {
+        "schema": SCHEMA,
+        "preprocessing": PREPROCESSING,
+        "classes": classifier.classes_.tolist(),
+        "mean": scaler.mean_.tolist(),
+        "scale": scaler.scale_.tolist(),
+        "coef": classifier.coef_.tolist(),
+        "intercept": classifier.intercept_.tolist(),
     }
-    
-    best_accuracy = 0.0
-    best_model = None
-    best_model_name = ""
-    
-    # 4. Train and Cross-Evaluate with Single-Class Safety Net
-    print("\n--- Training & Evaluation ---")
-    for name, model in models.items():
-        print(f"⏳ Training {name}...")
-        try:
-            model.fit(X_train, y_train)
-            
-            # Predict
-            predictions = model.predict(X_test)
-            acc = accuracy_score(y_test, predictions)
-            print(f"✅ {name} Accuracy: {acc * 100:.2f}%")
-            
-            # Track the winner
-            if acc > best_accuracy:
-                best_accuracy = acc
-                best_model = model
-                best_model_name = name
-        except Exception as e:
-            print(f"⚠️ {name} skipped: {str(e)}")
-            
-    # 5. Save the Winner if at least one model trained successfully
-    if best_model is not None:
-        print("\n--- Final Evaluation Report ---")
-        final_preds = best_model.predict(X_test)
-        print(f"🏆 Winner: {best_model_name} with {best_accuracy * 100:.2f}% accuracy!")
-        print("\n📝 Classification Report:")
-        print(classification_report(y_test, final_preds, zero_division=0))
-        
-        os.makedirs("models", exist_ok=True)
-        model_save_path = os.path.join("models", "best_sign_model.pkl")
-        
-        model_data = {
-            "model": best_model,
-            "model_name": best_model_name,
-            "labels_mapping": LABELS
-        }
-        
-        joblib.dump(model_data, model_save_path)
-        print(f"💾 Successfully saved the winner to '{model_save_path}'!\n")
-    else:
-        print("\n❌ Error: No models were able to train successfully.")
+
+
+def evaluate_holdout(
+    recognizer: CustomGestureRecognizer, rows: list[tuple[str, Sample]]
+) -> Counter[tuple[str, str]]:
+    confusion = Counter()
+    for label, sample in rows:
+        prediction = recognizer.predict(sample)
+        decided = prediction.label if prediction is not None and custom_eligible(prediction, sample) else _REJECT
+        confusion[label, decided] += 1
+    return confusion
+
+
+def _report_holdout(confusion: Counter[tuple[str, str]]) -> None:
+    decisions = (*ACTION_LABELS, _REJECT)
+    print("Held-out decisions after runtime custom gates (OTHER is correctly rejected):")
+    print(f"{'Actual':>12} {'Support':>8}" + "".join(f"{label:>12}" for label in decisions))
+    for label in LABELS:
+        counts = [confusion[label, decision] for decision in decisions]
+        print(f"{label:>12} {sum(counts):>8}" + "".join(f"{count:>12}" for count in counts))
+
+
+def _install_model(path: Path, parameters: dict) -> None:
+    content = json.dumps(parameters, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    if len(content) > MODEL_LIMIT:
+        raise DatasetError("custom model exceeds the 256 KiB runtime limit")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        temporary.replace(path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def train_pipeline(dataset_root: Path, model_path: Path, legacy_csv: Path | None = None) -> Pipeline:
+    """Fit and install only after a held-out session passes the custom safety gates."""
+    data = load_training_data(dataset_root, legacy_csv)
+    print(
+        f"Held-out session: {data.holdout}; {len(data.validation)} validation rows, "
+        f"{len(data.training)} training rows ({data.legacy_count} legacy), "
+        f"{data.duplicates} duplicate rows skipped."
+    )
+    pipeline = _fit_model(data.training)
+    parameters = _parameters(pipeline)
+    portable = CustomGestureRecognizer.from_parameters(parameters)
+    confusion = evaluate_holdout(portable, data.validation)
+    _report_holdout(confusion)
+    zero_correct = [label for label in ACTION_LABELS if not confusion[label, label]]
+    destructive_other = sum(confusion["OTHER", label] for label in DESTRUCTIVE)
+    failures = []
+    if zero_correct:
+        failures.append("no correct held-out decisions for " + ", ".join(zero_correct))
+    if destructive_other:
+        failures.append(f"{destructive_other} held-out OTHER samples produced destructive decisions")
+    if failures:
+        raise DatasetError("; ".join(failures))
+    _install_model(model_path, parameters)
+    print(f"Installed custom gesture model: {model_path}")
+    return pipeline
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--legacy-csv", type=Path, help="optional legacy CSV with a matching .parity.json receipt")
+    args = parser.parse_args(argv)
+    try:
+        root = data_dir()
+        train_pipeline(root / "custom-data", root / "models" / MODEL_NAME, args.legacy_csv)
+    except (OSError, ValueError) as exc:
+        print(f"Custom training failed: {exc}. Installed model not changed.", file=sys.stderr)
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    train_pipeline()
+    raise SystemExit(main())

@@ -11,7 +11,7 @@ def normalize_hand(hand):
         normalized coordinates
     """
 
-    if sum(hand) == 0:
+    if not any(hand):
         return hand
 
     wrist_x = hand[0]

@@ -5,10 +5,19 @@ env/
 __pycache__/
 *.pyc
 
-# Heavy ML Models & Datasets (Keep your repository light)
-models/best_sign_model.pkl
+# Local samples and model artifacts
+dataset/
+custom-data/
+models/
 *.csv
 *.pkl
+*.joblib
+
+# Local test and packaging output
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
 
 # IDE settings
 .vscode/
