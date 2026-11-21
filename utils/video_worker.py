@@ -53,7 +53,7 @@ def _encode_event(event):
         valid = (
             event.keys() == {
                 "kind", "state", "reason", "source", "label", "alphabet", "custom",
-                "progress", "waiting_release",
+                "progress", "waiting_release", "hands",
             }
             and event["state"] in ("no-hands", "uncertain", "usable", "ambiguous")
             and _text(event["reason"], _STATUS_CHARS)
@@ -62,6 +62,7 @@ def _encode_event(event):
             and _score(event["alphabet"]) and _score(event["custom"])
             and type(event["progress"]) is int and 0 <= event["progress"] <= 100
             and type(event["waiting_release"]) is bool
+            and type(event["hands"]) is int and 0 <= event["hands"] <= 2
         )
     else:
         valid = False
@@ -185,7 +186,9 @@ def _prepare_rgb(frame, settings):
     return cv2.flip(rgb, 1) if settings.mirror_input else rgb
 
 
-def _prediction(decision, destructive_armed, *, progress: int = 0, waiting_release: bool = False):
+def _prediction(
+    decision, destructive_armed, *, progress: int = 0, waiting_release: bool = False, hands: int = 0,
+):
     candidate = decision.candidate
     reason = decision.reason
     if candidate is not None and candidate.destructive and not destructive_armed:
@@ -199,6 +202,7 @@ def _prediction(decision, destructive_armed, *, progress: int = 0, waiting_relea
         "custom": [decision.custom.label, decision.custom.confidence] if decision.custom else None,
         "progress": max(0, min(100, int(progress))),
         "waiting_release": bool(waiting_release),
+        "hands": max(0, min(2, int(hands))),
     }
 
 
@@ -210,10 +214,67 @@ def _display_key(event):
         (custom[0], round(custom[1] * 100)) if custom else None,
         round(event["progress"] / 5) * 5,
         event["waiting_release"],
+        event["hands"],
     )
 
 
-def _stream(settings, capture, first, detector, arbiter, stabilizer, channels):
+class _SmoothedAlphabet:
+    """Short 3-frame probability smoother that removes single-frame jitter without hiding transitions."""
+
+    def __init__(self, recognizer, window: int = 3):
+        from collections import deque
+
+        self._recognizer = recognizer
+        self._window = deque(maxlen=window)
+        self._hand_count = 0
+
+    def reset(self):
+        self._window.clear()
+        self._hand_count = 0
+
+    def predict(self, detection):
+        import numpy as np
+
+        from .observations import Prediction
+
+        count = len(detection.hands)
+        if not detection.valid or count == 0:
+            self.reset()
+            return None
+        if count != self._hand_count:
+            self._window.clear()
+            self._hand_count = count
+        result = self._recognizer.predict_proba(detection)
+        if result is None:
+            self.reset()
+            return None
+        probs, slot = result
+        self._window.append(probs)
+        averaged = np.mean(self._window, axis=0)
+        runner_up, top = np.argsort(averaged)[-2:]
+        return Prediction(
+            label=str(self._recognizer.pipeline.classes_[top]),
+            confidence=float(averaged[top]),
+            margin=float(averaged[top] - averaged[runner_up]),
+            slot=slot,
+        )
+
+
+def _hud_label(event):
+    hands = event["hands"]
+    hand_str = "No hands" if hands == 0 else "1 hand" if hands == 1 else "2 hands"
+    label = event["label"]
+    source = event["source"]
+    score = event[source] if source and event.get(source) else event.get("alphabet") or event.get("custom")
+    if hands == 0 or score is None:
+        return hand_str
+    shown = label or score[0]
+    pct = round(score[1] * 100)
+    suffix = " (release)" if event["waiting_release"] else ""
+    return f"{hand_str} | {shown} {pct}%{suffix}"
+
+
+def _stream(settings, capture, first, detector, arbiter, stabilizer, channels, smoother=None):
     from .detector import render_preview_rgb
     from .recognition import Decision
 
@@ -223,12 +284,19 @@ def _stream(settings, capture, first, detector, arbiter, stabilizer, channels):
     for frame in frames(capture, first, channels.stop):
         observed = monotonic()
         rgb = None
+        hand_count = 0
         if frame is None:
             decision = failed_read
+            if smoother is not None:
+                smoother.reset()
         else:
             rgb = _prepare_rgb(frame, settings)
             height, width = rgb.shape[:2]
             detection = detector.detect_rgb(rgb)
+            hand_count = len(detection.hands)
+            if not detection.valid or hand_count == 0:
+                if smoother is not None:
+                    smoother.reset()
             decision = arbiter.observe(detection, width / height)
         action = stabilizer.observe(decision, observed)
         if channels.stop.is_set():
@@ -236,7 +304,7 @@ def _stream(settings, capture, first, detector, arbiter, stabilizer, channels):
         progress = 100 if action is not None else round(stabilizer.progress * 100)
         event = _prediction(
             decision, stabilizer.destructive_armed,
-            progress=progress, waiting_release=stabilizer.waiting_release,
+            progress=progress, waiting_release=stabilizer.waiting_release, hands=hand_count,
         )
         display = _display_key(event)
         if display != last_display:
@@ -246,7 +314,8 @@ def _stream(settings, capture, first, detector, arbiter, stabilizer, channels):
         if action is not None and not channels.publish({"kind": "action", "label": action.label, "timestamp": observed}):
             return
         if rgb is not None:
-            channels.write_preview(render_preview_rgb(rgb, detection, mirror=not settings.mirror_input))
+            hud = (_hud_label(event), progress)
+            channels.write_preview(render_preview_rgb(rgb, detection, mirror=not settings.mirror_input, hud=hud))
             due = observed + period
             while (delay := due - monotonic()) > 0:
                 if channels.stop.wait(min(delay, STREAM_TIMEOUT)):
@@ -267,7 +336,11 @@ def camera_main(settings, backend, thresholds, timing, channels):
             if channels.stop.is_set() or not _status(channels, "opened", info.describe()):
                 return
 
-            from .custom_gestures import RECOVERY, CustomGestureRecognizer, CustomModelError
+            from .custom_gestures import (
+                CustomGestureRecognizer,
+                CustomModelError,
+                GeometricCustomGestureRecognizer,
+            )
             from .detector import HandDetector
             from .model_assets import INSTALL_HINT, AssetError
             from .recognition import Arbiter
@@ -288,22 +361,35 @@ def camera_main(settings, backend, thresholds, timing, channels):
 
             try:
                 custom = CustomGestureRecognizer()
-            except (AssetError, CustomModelError, OSError) as exc:
-                custom = None
-                custom_message = str(exc) if isinstance(exc, CustomModelError) else f"Custom gestures unavailable: {exc}"
+            except (AssetError, CustomModelError, OSError):
+                custom = GeometricCustomGestureRecognizer()
+                custom_message = (
+                    "Built-in commands ready (0, 1, SPACE, BACKSPACE, CLEAR_WORD)"
+                    if alphabet is not None
+                    else "Built-in commands ready; destructive commands require SignSpeak."
+                )
             else:
                 custom_message = "Custom gestures ready" if alphabet is not None else (
                     "Custom gestures ready; destructive webcam commands require SignSpeak. Manual editing still works."
                 )
-            if channels.stop.is_set() or not _status(
-                channels, "custom", custom_message, RECOVERY if custom is None else "",
-            ):
+            if channels.stop.is_set() or not _status(channels, "custom", custom_message):
                 return
 
-            detector = cleanup.enter_context(HandDetector())
+            detector = cleanup.enter_context(
+                HandDetector(
+                    min_detection_confidence=0.30,
+                    min_tracking_confidence=0.30,
+                    resolve_duplicate_handedness=True,
+                )
+            )
+            smoother = _SmoothedAlphabet(alphabet) if alphabet is not None else None
             if not channels.stop.is_set() and channels.publish({"kind": "ready"}):
-                _stream(settings, capture, first, detector, Arbiter(alphabet, custom, thresholds),
-                        Stabilizer(timing), channels)
+                _stream(
+                    settings, capture, first, detector,
+                    Arbiter(smoother, custom, thresholds),
+                    Stabilizer(timing, arm_destructive_on_start=True),
+                    channels, smoother,
+                )
     except Exception as exc:
         if not channels.stop.is_set():
             if opened:

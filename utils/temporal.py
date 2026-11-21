@@ -30,8 +30,9 @@ class Timing:
 
 
 class Stabilizer:
-    def __init__(self, timing=Timing()):
+    def __init__(self, timing=Timing(), *, arm_destructive_on_start: bool = False):
         self.timing = timing
+        self._arm_on_start = bool(arm_destructive_on_start)
         self.reset()
 
     def reset(self):
@@ -41,7 +42,7 @@ class Stabilizer:
         self._last_label = None
         self._last_commit = float("-inf")
         self._last_destructive = float("-inf")
-        self.destructive_armed = False
+        self.destructive_armed = self._arm_on_start
         self._waiting_release = False
         self._forget_candidate()
 

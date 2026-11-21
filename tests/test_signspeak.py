@@ -300,6 +300,20 @@ def test_detect_rgb_and_render_preview_rgb_avoid_second_conversion(monkeypatch):
     assert detection.valid and len(detection.hands) == 1
 
 
+def test_resolve_duplicate_handedness_recovers_two_hand_frame(monkeypatch):
+    left_pts = _points(0.0)
+    right_pts = _points(0.1)
+    _fake_vision(monkeypatch, [_raw_result([left_pts, right_pts], [("Right", 0.91), ("Right", 0.62)])])
+    with HandDetector(
+        min_detection_confidence=0.30,
+        min_tracking_confidence=0.30,
+        resolve_duplicate_handedness=True,
+    ) as detector:
+        detection = detector.detect(np.zeros((4, 8, 3), dtype=np.uint8))
+    assert detection.valid and len(detection.hands) == 2
+    assert {hand.label for hand in detection.hands} == {"Left", "Right"}
+
+
 @pytest.mark.real_model
 def test_pinned_pipeline_properties_and_probability_parity(request):
     from sklearn.pipeline import Pipeline

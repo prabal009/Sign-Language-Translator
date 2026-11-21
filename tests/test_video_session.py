@@ -62,9 +62,10 @@ def test_only_latest_frame_and_fifo_saturation():
         assert channels.read_preview(image.sequence) is None
         assert channels.publish({
             "kind": "prediction", "state": "usable", "reason": "", "source": "alphabet", "label": "A",
-            "alphabet": ["A", 0.92], "custom": None, "progress": 65, "waiting_release": False,
+            "alphabet": ["A", 0.92], "custom": None, "progress": 65, "waiting_release": False, "hands": 2,
         })
-        assert channels.drain()[0]["progress"] == 65
+        drained = channels.drain()[0]
+        assert drained["progress"] == 65 and drained["hands"] == 2
         for i in range(32):
             assert channels.publish({"kind": "action", "label": "A", "timestamp": float(i)})
         assert not channels.publish({"kind": "action", "label": "B", "timestamp": 32.0})

@@ -280,19 +280,26 @@ def test_manual_buttons_live_readout_settings_and_guide(qtbot, desktop):
 
     worker.events.append({
         "kind": "prediction", "state": "usable", "reason": "", "source": "alphabet", "label": "K",
-        "alphabet": ["K", 0.91], "custom": None, "progress": 75, "waiting_release": False,
+        "alphabet": ["K", 0.91], "custom": None, "progress": 75, "waiting_release": False, "hands": 2,
     })
     qtbot.waitUntil(lambda: window.sign_badge.text() == "K")
     assert window.confidence_bar.value() == 91
     assert window.hold_bar.value() == 75
     assert window.hold_value.text() == "75%"
+    assert window.hands_status.text() == "Hands: 2 detected"
 
     worker.events.append({
         "kind": "prediction", "state": "usable", "reason": "Lower hands briefly to repeat this sign",
         "source": "alphabet", "label": "K", "alphabet": ["K", 0.91], "custom": None,
-        "progress": 0, "waiting_release": True,
+        "progress": 0, "waiting_release": True, "hands": 1,
     })
     qtbot.waitUntil(lambda: window.hold_value.text() == "Release")
+    assert window.hands_status.text() == "Hands: 1 detected"
+
+    starts_before = len(worker.starts)
+    window.mirror_checkbox.setChecked(True)
+    assert window.camera.mirror_input is True
+    assert len(worker.starts) == starts_before + 1
 
     dialog = SettingsDialog(window.thresholds, window.timing, "dark", window)
     qtbot.addWidget(dialog)

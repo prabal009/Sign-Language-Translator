@@ -58,3 +58,39 @@ def test_other_low_hand_score_and_weak_destructive_margin_do_not_act():
     assert not custom_eligible(Prediction("BACKSPACE", 0.97, 0.29), sample)
     assert custom_eligible(Prediction("BACKSPACE", 0.95, 0.30), sample)
     assert pose_eligible("SPACE", sample)
+
+
+def test_geometric_custom_recognizer_handles_middle_fingers_and_separated_zero():
+    from utils.custom_gestures import GeometricCustomGestureRecognizer
+
+    geo = GeometricCustomGestureRecognizer()
+    one_mid = Detection((_hand(1, "Left", 0.60),))
+    s1 = sample_detection(one_mid, 4 / 3)
+    p1 = geo.predict_detection(one_mid, s1)
+    assert p1 is not None and p1.label == "BACKSPACE" and p1.slot == "geometric"
+    assert custom_eligible(p1, s1)
+
+    two_mid = Detection((_hand(1, "Left", 0.65), _hand(1, "Right", 0.65)))
+    s2 = sample_detection(two_mid, 4 / 3)
+    p2 = geo.predict_detection(two_mid, s2)
+    assert p2 is not None and p2.label == "CLEAR_WORD" and custom_eligible(p2, s2)
+
+    two_pinky = Detection((_hand(3, "Left", 0.80), _hand(3, "Right", 0.80)))
+    s3 = sample_detection(two_pinky, 4 / 3)
+    p3 = geo.predict_detection(two_pinky, s3)
+    assert p3 is not None and p3.label == "1" and custom_eligible(p3, s3)
+
+    # Touching index fingers (like E/F/X) must NOT trigger 0, while separated vertical index fingers DO.
+    h_left = _hand(0, "Left", 0.90)
+    h_right_touching = _hand(0, "Right", 0.90)
+    s_touch = sample_detection(Detection((h_left, h_right_touching)), 4 / 3)
+    assert geo.predict_detection(Detection((h_left, h_right_touching)), s_touch) is None
+
+    shifted = _hand(0, "Right", 0.90)
+    shifted_pts = shifted.points.copy()
+    shifted_pts[:, 0] += 0.30
+    h_right_sep = Hand(shifted_pts, "Right", 0.90)
+    det_sep = Detection((h_left, h_right_sep))
+    s_sep = sample_detection(det_sep, 4 / 3)
+    p0 = geo.predict_detection(det_sep, s_sep)
+    assert p0 is not None and p0.label == "0" and custom_eligible(p0, s_sep)

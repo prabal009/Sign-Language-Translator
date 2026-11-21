@@ -40,6 +40,14 @@ def test_destructive_requires_valid_below_threshold_alphabet_score():
     assert at_floor.kind == "ambiguous" and at_floor.candidate is None
     assert at_floor.alphabet.label == "A" and at_floor.custom.label == "BACKSPACE"
 
+    # Geometric middle-finger pose is not blocked by moderate closed-set alphabet guesses (<0.90),
+    # but still yields ambiguity if alphabet confidence is >=0.90.
+    geo_delete = SimpleNamespace(predict=lambda _: Prediction("BACKSPACE", 0.98, 0.90, slot="geometric"))
+    mid_alpha = Arbiter(_model("I", 0.72, 0.2), geo_delete).observe(detection, 1)
+    assert mid_alpha.kind == "usable" and mid_alpha.candidate == Candidate("custom", "BACKSPACE")
+    high_alpha = Arbiter(_model("I", 0.92, 0.6), geo_delete).observe(detection, 1)
+    assert high_alpha.kind == "ambiguous" and high_alpha.candidate is None
+
 
 def test_nondestructive_custom_priority_and_guarded_fallback():
     detection = Detection((_middle(),))

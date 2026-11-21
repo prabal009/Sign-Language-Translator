@@ -56,10 +56,18 @@ class Arbiter:
         alphabet_eligible = (alphabet is not None and len(alphabet.label) == 1
                              and alphabet.label in ascii_uppercase and alphabet.confidence >= self.thresholds.alphabet)
         sample = sample_detection(detection, aspect) if self.custom is not None else None
-        custom = self.custom.predict(sample) if sample is not None else None
+        if sample is None:
+            custom = None
+        elif hasattr(self.custom, "predict_detection"):
+            custom = self.custom.predict_detection(detection, sample)
+        else:
+            custom = self.custom.predict(sample)
         if custom is not None and custom_eligible(custom, sample, self.thresholds.custom, self.thresholds.destructive):
             if custom.label in DESTRUCTIVE:
-                if alphabet_eligible:
+                conflict = alphabet_eligible and (
+                    alphabet.confidence >= 0.90 if custom.slot == "geometric" else True
+                )
+                if conflict:
                     return Decision("ambiguous", "Alphabet/command conflict — release both hands", None, alphabet, custom)
                 if alphabet is None:
                     reason = ("Destructive webcam actions need SignSpeak" if self.alphabet is None else

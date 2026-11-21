@@ -109,6 +109,22 @@ class SignSpeakAlphabetRecognizer:
         vector = build_features(detection)
         return None if vector is None else self.predict_features(vector)
 
+    def predict_proba(self, detection: Detection) -> tuple[np.ndarray, str] | None:
+        """Return the winning 26-class probability vector and slot for temporal smoothing."""
+        vector = build_features(detection)
+        if vector is None:
+            return None
+        batch = np.empty((2, FEATURE_DIMENSION))
+        with np.errstate(over="ignore", invalid="ignore"):
+            batch[0] = vector
+        if not np.isfinite(batch[0]).all():
+            return None
+        batch[1, :HAND_FEATURES] = batch[0, HAND_FEATURES:]
+        batch[1, HAND_FEATURES:] = batch[0, :HAND_FEATURES]
+        probabilities = self.pipeline.predict_proba(batch)
+        winner = int(np.argmax(probabilities.max(axis=1)))
+        return probabilities[winner], ("swapped" if winner else "as-detected")
+
     def predict_features(self, vector: np.ndarray) -> Prediction | None:
         """Score as-detected and swapped slots together, without reflecting any coordinate."""
         if (

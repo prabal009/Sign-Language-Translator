@@ -141,3 +141,19 @@ def test_progress_and_waiting_release_track_hold_state():
     assert state.observe(RELEASE, 0.90) is None
     assert state.observe(choice("A"), 1.00) is None
     assert not state.waiting_release
+
+
+def test_arm_destructive_on_start_allows_first_delete_then_requires_release():
+    state = Stabilizer(
+        Timing(0.45, 0.70, 0.75, 0.35, 0.90),
+        arm_destructive_on_start=True,
+    )
+    delete = choice("CLEAR_WORD", "custom")
+    assert state.destructive_armed
+    assert send(state, delete, 0.0, 0.20, 0.40, 0.60, 0.75) == ["CLEAR_WORD"]
+    assert not state.destructive_armed
+    # Holding again without a no-hands release must NOT delete a second word.
+    assert not send(state, delete, 1.70, 1.90, 2.10, 2.30, 2.50)
+    assert not send(state, RELEASE, 2.60, 2.75, 2.90)
+    assert state.destructive_armed
+    assert send(state, delete, 3.00, 3.20, 3.40, 3.60, 3.75) == ["CLEAR_WORD"]

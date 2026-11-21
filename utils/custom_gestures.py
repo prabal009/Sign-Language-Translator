@@ -96,13 +96,82 @@ def pose_eligible(label: str, sample: Sample) -> bool:
 def custom_eligible(prediction: Prediction, sample: Sample, threshold=0.85, destructive_threshold=0.95) -> bool:
     label = prediction.label
     destructive = label in DESTRUCTIVE
+    min_hand_score = 0.50 if prediction.slot == "geometric" else 0.70
     return (
         label in ACTION_LABELS
-        and sample.hand_score >= 0.70
+        and sample.hand_score >= min_hand_score
         and prediction.confidence >= (destructive_threshold if destructive else threshold)
         and prediction.margin >= (0.30 if destructive else 0.20)
         and pose_eligible(label, sample)
     )
+
+
+def _separated_zero(detection: Detection, sample: Sample) -> bool:
+    """Two vertical index fingers pointing upward and clearly separated (not touching like E/F/J/X)."""
+    if not pose_eligible("0", sample) or len(detection.hands) != 2:
+        return False
+    p0, p1 = detection.hands[0].points, detection.hands[1].points
+    palm = max(float(np.linalg.norm(p0[9, :2] - p0[0, :2])), float(np.linalg.norm(p1[9, :2] - p1[0, :2])), _MIN_LENGTH)
+    tip_dist = float(np.linalg.norm(p0[8, :2] - p1[8, :2]))
+    mcp_dist = float(np.linalg.norm(p0[5, :2] - p1[5, :2]))
+    for points in (p0, p1):
+        dy = float(points[6, 1] - points[8, 1])
+        dx = abs(float(points[8, 0] - points[6, 0]))
+        if dy <= 0 or dx > 0.45 * dy:
+            return False
+    return tip_dist > 0.85 * palm and mcp_dist > 0.70 * palm
+
+
+def _palm_down_space(detection: Detection) -> bool:
+    """Single flat horizontal palm facing downward (all 4 non-thumb fingers extended, narrow vertical span)."""
+    if len(detection.hands) != 1:
+        return False
+    points = detection.hands[0].points
+    palm_len = float(np.linalg.norm(points[9] - points[0]))
+    if not isfinite(palm_len) or palm_len <= 1e-4:
+        return False
+    straight_3d = cos(radians(145))
+    for mcp, pip, tip in zip(_MCP, _PIP, _TIP):
+        v1 = points[mcp] - points[pip]
+        v2 = points[tip] - points[pip]
+        n1, n2 = float(np.linalg.norm(v1)), float(np.linalg.norm(v2))
+        if n1 <= _MIN_LENGTH or n2 <= _MIN_LENGTH:
+            return False
+        if float(np.dot(v1, v2) / (n1 * n2)) > straight_3d:
+            return False
+    key = [0, 5, 8, 9, 12, 13, 16, 17, 20]
+    y_span = float(points[key, 1].max() - points[key, 1].min())
+    x_span = float(points[key, 0].max() - points[key, 0].min())
+    avg_tip_y = float(points[list(_TIP), 1].mean())
+    avg_mcp_y = float(points[list(_MCP), 1].mean())
+    return x_span > 1.8 * y_span and abs(avg_tip_y - avg_mcp_y) < 0.08 and avg_tip_y >= float(points[0, 1]) - 0.06
+
+
+class GeometricCustomGestureRecognizer:
+    """Deterministic zero-FP landmark pose recognizer for 0, 1, SPACE, BACKSPACE, and CLEAR_WORD."""
+
+    def predict(self, sample: Sample) -> Prediction | None:
+        for label in ("CLEAR_WORD", "BACKSPACE", "1"):
+            if pose_eligible(label, sample):
+                return Prediction(label, 0.98, 0.90, slot="geometric")
+        return None
+
+    def predict_detection(self, detection: Detection, sample: Sample) -> Prediction | None:
+        if not detection.valid or not detection.hands:
+            return None
+        if len(detection.hands) == 2:
+            if pose_eligible("CLEAR_WORD", sample):
+                return Prediction("CLEAR_WORD", 0.98, 0.90, slot="geometric")
+            if pose_eligible("1", sample):
+                return Prediction("1", 0.98, 0.90, slot="geometric")
+            if _separated_zero(detection, sample):
+                return Prediction("0", 0.96, 0.85, slot="geometric")
+            return None
+        if pose_eligible("BACKSPACE", sample):
+            return Prediction("BACKSPACE", 0.98, 0.90, slot="geometric")
+        if _palm_down_space(detection):
+            return Prediction("SPACE", 0.95, 0.85, slot="geometric")
+        return None
 
 
 def _unique_fields(pairs):

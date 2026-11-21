@@ -8,14 +8,22 @@ from .observations import Detection, Hand, valid_hand, validate_hands
 
 
 class HandDetector:
-    def __init__(self, *, static_image_mode: bool = False):
+    def __init__(
+        self,
+        *,
+        static_image_mode: bool = False,
+        min_detection_confidence: float = 0.50,
+        min_tracking_confidence: float = 0.50,
+        resolve_duplicate_handedness: bool = False,
+    ):
         import mediapipe as mp
 
+        self._resolve_duplicate = resolve_duplicate_handedness
         self._hands = mp.solutions.hands.Hands(
             static_image_mode=static_image_mode,
             max_num_hands=2,
-            min_detection_confidence=0.50,
-            min_tracking_confidence=0.50,
+            min_detection_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence,
         )
 
     def __enter__(self):
@@ -52,8 +60,27 @@ class HandDetector:
             return Detection(valid=False)
         if validate_hands(hands):
             return Detection(hands)
+        if (
+            self._resolve_duplicate
+            and len(hands) == 2
+            and all(valid_hand(hand) for hand in hands)
+            and hands[0].label == hands[1].label
+        ):
+            resolved = _resolve_duplicate_hands(hands)
+            if validate_hands(resolved):
+                return Detection(resolved)
         # Valid points can still be drawn, but duplicate slots are never classified.
         return Detection(tuple(hand for hand in hands if valid_hand(hand)), valid=False)
+
+
+def _resolve_duplicate_hands(hands: tuple[Hand, Hand]) -> tuple[Hand, Hand]:
+    """Assign distinct Left/Right slots when MediaPipe labels two overlapping hands identically."""
+    first, second = hands
+    if first.score > second.score or (first.score == second.score and first.points[0, 0] <= second.points[0, 0]):
+        other = "Right" if first.label == "Left" else "Left"
+        return (first, Hand(second.points, other, second.score))
+    other = "Right" if second.label == "Left" else "Left"
+    return (Hand(first.points, other, first.score), second)
 
 
 def _raw_hand(landmarks, handedness) -> Hand:
@@ -83,10 +110,12 @@ def _draw_mirrored(
     for hand in detection.hands:
         pixels = [
             (
-                (width - 1 - min(floor(x * width), width - 1)) if mirror else min(floor(x * width), width - 1),
-                min(floor(y * height), height - 1),
+                (width - 1 - max(0, min(floor(x * width), width - 1)))
+                if mirror
+                else max(0, min(floor(x * width), width - 1)),
+                max(0, min(floor(y * height), height - 1)),
             )
-            if 0 <= x <= 1 and 0 <= y <= 1 else None
+            if -0.05 <= x <= 1.05 and -0.05 <= y <= 1.05 else None
             for x, y, _ in hand.points
         ]
         for start, end in solutions.hands.HAND_CONNECTIONS:
@@ -115,8 +144,40 @@ def render_preview(frame: np.ndarray, detection: Detection, *, indices: bool = F
     return _draw_mirrored(frame, detection, indices=indices, rgb=False)
 
 
+def draw_live_hud(rgb: np.ndarray, text: str, progress: int = 0) -> np.ndarray:
+    """Draw a compact, restrained status pill and hold progress bar in the top-left of an RGB preview."""
+    import cv2
+
+    height, width = rgb.shape[:2]
+    if width < 160 or height < 80 or not text:
+        return rgb
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.55 if width >= 480 else 0.45
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, scale, 1)
+    pad_x, pad_y = 10, 8
+    box_w = min(width - 16, text_w + pad_x * 2)
+    box_h = text_h + baseline + pad_y * 2 + 5
+    x0, y0 = 8, 8
+    x1, y1 = x0 + box_w, min(height - 8, y0 + box_h)
+    roi = rgb[y0:y1, x0:x1]
+    overlay = np.full_like(roi, (18, 21, 27))
+    cv2.addWeighted(overlay, 0.78, roi, 0.22, 0, dst=roi)
+    cv2.rectangle(rgb, (x0, y0), (x1, y1), (66, 74, 88), 1)
+    cv2.putText(rgb, text, (x0 + pad_x, y0 + pad_y + text_h), font, scale, (242, 245, 250), 1, cv2.LINE_AA)
+    pct = max(0, min(100, int(progress)))
+    if pct > 0:
+        bar_y0 = max(y0 + 2, y1 - 4)
+        fill_w = max(2, int((box_w - 2) * pct / 100))
+        cv2.rectangle(rgb, (x0 + 1, bar_y0), (min(x1 - 1, x0 + 1 + fill_w), y1 - 1), (79, 141, 214), -1)
+    return rgb
+
+
 def render_preview_rgb(
     rgb: np.ndarray, detection: Detection, *, indices: bool = False, mirror: bool = True,
+    hud: tuple[str, int] | None = None,
 ) -> np.ndarray:
     """Render landmarks onto an RGB frame, mirroring unless already mirrored for input."""
-    return _draw_mirrored(rgb, detection, indices=indices, rgb=True, mirror=mirror)
+    preview = _draw_mirrored(rgb, detection, indices=indices, rgb=True, mirror=mirror)
+    if hud is not None:
+        draw_live_hud(preview, hud[0], hud[1])
+    return preview

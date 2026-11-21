@@ -1,6 +1,6 @@
 # Sign Language Translator
 
-A native PyQt6 desktop app that turns **isolated, static Indian Sign Language (ISL) fingerspelling A–Z** into text. The alphabet works after installing and verifying the pinned SignSpeak model. The five optional webcam commands need your own validated training samples. Manual text controls work with no camera or model. There is no browser or server to start.
+A native PyQt6 desktop app that turns **isolated, static Indian Sign Language (ISL) fingerspelling A–Z** and **five built-in gesture commands (`0`, `1`, `SPACE`, `BACKSPACE`, `CLEAR_WORD`)** into text. The alphabet uses the pinned, hash-verified SignSpeak `1.0.0-realsign` model; the five commands work out of the box via deterministic geometric pose recognition (with optional personalized local training). Manual text controls work with no camera or model. There is no browser or server to start.
 
 ![Native Sign Language Translator window with camera controls, live recognition inspector, and translation bar](docs/native-ui.png)
 
@@ -205,7 +205,8 @@ Webcam (CAP_PROP_BUFFERSIZE=1) → isolated camera process → single BGR→RGB 
 | Camera chooser / Index / Refresh | `Enter` submits the index | Select a device (with friendly Linux V4L2 names when available) or manually enter a nonnegative index. Refresh updates choices without opening cameras. Selecting a new camera while live switches streams. |
 | Start / Resume / Retry | — | Open the selected camera or retry after a failure. |
 | Pause / Stop | — | Release the camera. Pause holds the last preview; Stop resets preview and recognition status. Both keep the translation. |
-| Sign Guide | — | Open the offline ISL A–Z RealSign reference chart and custom command definitions. |
+| Mirror input | — | 1-click toggle to flip recognition input horizontally (for left-handed signing or hardware-mirrored webcams). |
+| Sign Guide | — | Open the offline ISL A–Z RealSign reference chart and gesture command definitions. |
 | Settings | — | Adjust confidence thresholds, hold durations, cooldowns, input mirroring (left-handed / mirrored webcam), and theme (`Dark`, `Light`, `System`) live without restarting. |
 | Space button | `Space` | Insert one space after text; no leading or doubled spaces. |
 | Backspace button | `Backspace` | Remove the last character. |
@@ -229,14 +230,14 @@ Settings can be adjusted live from the **Settings** button in the toolbar or pas
 | `--alphabet-threshold` | `0.50` | SignSpeak deployed letter confidence floor |
 | `--custom-threshold`, `--destructive-threshold` | `0.85`, `0.95` | Confidence floors for custom non-destructive and destructive webcam actions |
 | `--hold-seconds` | `0.45` | Stable letter hold |
-| `--custom-hold-seconds`, `--destructive-hold-seconds` | `0.70`, `1.00` | Stable custom non-destructive and destructive holds |
-| `--cooldown-seconds`, `--destructive-cooldown-seconds` | `0.35`, `1.25` | Global and destructive cooldowns from the last relevant commit |
+| `--custom-hold-seconds`, `--destructive-hold-seconds` | `0.70`, `0.75` | Stable custom non-destructive and destructive holds |
+| `--cooldown-seconds`, `--destructive-cooldown-seconds` | `0.35`, `0.90` | Global and destructive cooldowns from the last relevant commit |
 
-Confidence floors must be between 0 and 1; durations must be positive. Destructive confidence and hold cannot be lower than their letter/custom counterparts, and destructive cooldown cannot be shorter than the global cooldown. A commit needs at least three accepted observations. Customs must also pass confidence margin, handedness confidence and pose checks. The first destructive webcam action after Start/Resume and each later destructive action require a genuine no-hands release. If an eligible alphabet letter conflicts with a destructive action, both are blocked; release your hands before trying again. Destructive webcam actions are disabled without a valid SignSpeak score. These checks do not affect manual editing.
+Confidence floors must be between 0 and 1; durations must be positive. Destructive confidence and hold cannot be lower than their letter/custom counterparts, and destructive cooldown cannot be shorter than the global cooldown. A commit needs at least three accepted observations. Destructive webcam actions (`BACKSPACE`, `CLEAR_WORD`) are armed when a camera session starts so your first delete works immediately, then require a genuine no-hands release (0.30 s) before deleting again to prevent accidental rapid wipes. Destructive webcam actions are disabled without a valid SignSpeak model. These checks do not affect manual editing.
 
-## Train optional webcam commands
+## Gesture commands (built-in + optional local training)
 
-There is no validated custom model or example training set shipped with the project. All five webcam commands remain unavailable until your training passes. Neither A–Z nor manual editing requires this step.
+All five webcam commands (`0`, `1`, `SPACE`, `BACKSPACE`, `CLEAR_WORD`) work **out of the box** via a deterministic geometric landmark recognizer (verified **0 / 260 false positives** across all 26 RealSign A–Z letters). If you prefer a personalized statistical classifier, you can still train a local `custom_gestures.json` using the steps below — when installed, your trained model automatically takes precedence over the built-in geometric recognizer.
 
 | Label | Pose to collect |
 |---|---|
@@ -312,7 +313,7 @@ Include Left-only, Right-only and two-hand references. Hand-slot presence must m
 
 | OS / environment | Automated or source evidence | Physical-device / desktop evidence |
 |---|---|---|
-| Kali Linux x86-64, CPython 3.11/3.12 | Pinned source stack, `ruff`, all **133 pytest tests** (including required `real_model`), offscreen `--smoke-test`, and RealSign offline evaluation (`78` test images + `26` `Letters/A–Z` references) verified locally. A native bundle built with 3.12.12 passed offscreen smoke without app-local assets, network access or system Python on PATH. See the [audit](docs/AUDIT_REPORT.md). | Native Wayland preview/lifecycle and XWayland (`xcb`) preview exercised with the built-in HP Wide Vision HD webcam. Two video nodes represented the same camera. No live human signing accuracy trial or external USB recovery verified. |
+| Kali Linux x86-64, CPython 3.11/3.12 | Pinned source stack, `ruff`, all **136 pytest tests** (including required `real_model`), offscreen `--smoke-test`, and RealSign offline evaluation (`78` strict parity images + `260` live-config detector/geometric-command images + `26` `Letters/A–Z` references) verified locally. A native bundle built with 3.12.12 passed offscreen smoke without app-local assets, network access or system Python on PATH. See the [audit](docs/AUDIT_REPORT.md). | Native Wayland preview/lifecycle and XWayland (`xcb`) preview exercised with the built-in HP Wide Vision HD webcam. Two video nodes represented the same camera. No formal multi-user live signing benchmark or external USB recovery verified. |
 | Ubuntu 24.04 x64 | Hosted Python 3.11/3.12 test matrix and separate 3.12 package smoke defined, not a recorded CI pass. | No Ubuntu webcam run recorded. |
 | Windows 10/11 x64 | Target source and packaging setup; Windows-hosted Python 3.11/3.12 test matrix and separate 3.12 package smoke defined, not a recorded CI pass. | Native install, privacy and camera behavior, USB recovery, and Windows distribution not verified. |
 | macOS, ARM, phones and tablets | No verified support or build. | Not tested. |

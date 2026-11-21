@@ -45,7 +45,19 @@ _THEMES = ("dark", "light", "system")
 
 _DARK_QSS = """
 QMainWindow, QDialog { background: #16181c; color: #eceef2; }
-QLabel { color: #eceef2; background: transparent; }
+QLabel, QCheckBox { color: #eceef2; background: transparent; }
+QCheckBox { spacing: 6px; }
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid #485060;
+    background: #13161b;
+}
+QCheckBox::indicator:checked {
+    background: #2b6cb0;
+    border-color: #4f8dd6;
+}
 QWidget#toolbar, QWidget#panel, QWidget#bottomBar {
     background: #1d2026;
     border: 1px solid #2b303a;
@@ -140,7 +152,19 @@ QProgressBar#holdBar::chunk {
 
 _LIGHT_QSS = """
 QMainWindow, QDialog { background: #f3f5f8; color: #1b2028; }
-QLabel { color: #1b2028; background: transparent; }
+QLabel, QCheckBox { color: #1b2028; background: transparent; }
+QCheckBox { spacing: 6px; }
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid #9aa5b5;
+    background: #ffffff;
+}
+QCheckBox::indicator:checked {
+    background: #2563a8;
+    border-color: #1f5591;
+}
 QWidget#toolbar, QWidget#panel, QWidget#bottomBar {
     background: #ffffff;
     border: 1px solid #d7dde6;
@@ -469,7 +493,7 @@ class SignGuideDialog(QDialog):
             )
         body.addWidget(self.chart_label)
 
-        custom_heading = _label("OPTIONAL CUSTOM WEBCAM COMMANDS (REQUIRE LOCAL TRAINING)", object_name="sectionTitle")
+        custom_heading = _label("BUILT-IN GESTURE COMMANDS (WORK OUT OF THE BOX)", object_name="sectionTitle")
         body.addWidget(custom_heading)
         for label in ACTION_LABELS:
             body.addWidget(_label(f"{label}: {DESCRIPTIONS[label]}", object_name="statusLine"))
@@ -551,6 +575,10 @@ class ModernSignLanguageApp(QMainWindow):
         self.stop_button = QPushButton("Stop")
         for button in (self.start_button, self.pause_button, self.stop_button):
             controls.addWidget(button)
+        self.mirror_checkbox = QCheckBox("Mirror input")
+        self.mirror_checkbox.setChecked(self.camera.mirror_input)
+        self.mirror_checkbox.setToolTip("Flip recognition input horizontally for left-handed signing or mirrored webcams")
+        controls.addWidget(self.mirror_checkbox)
         controls.addStretch()
         hint = _label("Shortcuts: Space · Backspace · Ctrl+Backspace · C · Ctrl+C", object_name="muted")
         hint.setWordWrap(False)
@@ -589,8 +617,12 @@ class ModernSignLanguageApp(QMainWindow):
         self.sign_badge.setAccessibleName("Detected sign")
         self.sign_source = _label("Idle", object_name="signSource")
         self.sign_source.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hands_status = _label("Hands: —", object_name="muted")
+        self.hands_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hands_status.setAccessibleName("Hands detected")
         sign_card_layout.addWidget(self.sign_badge)
         sign_card_layout.addWidget(self.sign_source)
+        sign_card_layout.addWidget(self.hands_status)
         inspector_layout.addWidget(sign_card)
 
         conf_header = QHBoxLayout()
@@ -677,10 +709,11 @@ class ModernSignLanguageApp(QMainWindow):
         self.output.setReadOnly(True)
         self.output.setPlaceholderText("Committed signs appear here.")
         output_font = QFont(self.output.font())
-        output_font.setPointSize(max(13, output_font.pointSize() + 3))
+        output_font.setPointSize(22)
+        output_font.setWeight(QFont.Weight.DemiBold)
         self.output.setFont(output_font)
-        self.output.setMinimumHeight(72)
-        self.output.setMaximumHeight(112)
+        self.output.setMinimumHeight(88)
+        self.output.setMaximumHeight(136)
         bottom_layout.addWidget(self.output)
         layout.addWidget(bottom)
 
@@ -690,6 +723,7 @@ class ModernSignLanguageApp(QMainWindow):
         self.refresh_button.clicked.connect(self._refresh)
         self.guide_button.clicked.connect(self._open_guide)
         self.settings_button.clicked.connect(self._open_settings)
+        self.mirror_checkbox.toggled.connect(self._toggle_mirror_input)
         self.camera_choice.currentIndexChanged.connect(self._select_list_item)
         self.camera_index.valueChanged.connect(self._select_index)
         self.start_button.clicked.connect(self._start)
@@ -748,6 +782,13 @@ class ModernSignLanguageApp(QMainWindow):
             self.preview.reset_frame()
             self._start()
 
+    def _toggle_mirror_input(self, checked: bool):
+        if self.camera.mirror_input == checked:
+            return
+        self.camera = replace(self.camera, mirror_input=checked)
+        if self._mode == "live" and self.worker.state != "failed":
+            self._start()
+
     def _open_guide(self):
         if self._guide_dialog is None:
             self._guide_dialog = SignGuideDialog(self)
@@ -768,6 +809,8 @@ class ModernSignLanguageApp(QMainWindow):
             self.thresholds = dialog.thresholds
             self.timing = dialog.timing
             self.camera = replace(self.camera, mirror_input=dialog.mirror_input)
+            with QSignalBlocker(self.mirror_checkbox):
+                self.mirror_checkbox.setChecked(dialog.mirror_input)
             if dialog.theme != self._theme:
                 self._apply_theme(dialog.theme)
             if changed_recognition and self._mode == "live" and self.worker.state != "failed":
@@ -776,6 +819,7 @@ class ModernSignLanguageApp(QMainWindow):
     def _reset_live_readout(self, source="Idle"):
         self.sign_badge.setText("—")
         self.sign_source.setText(source)
+        self.hands_status.setText("Hands: —")
         self.confidence_value.setText("—")
         self.confidence_bar.setValue(0)
         self.hold_value.setText("0%")
@@ -873,6 +917,11 @@ class ModernSignLanguageApp(QMainWindow):
         progress = max(0, min(100, progress))
         self.hold_bar.setValue(progress)
         self.hold_value.setText("Release" if event.get("waiting_release") else f"{progress}%")
+        hands = event.get("hands")
+        if hands is not None:
+            self.hands_status.setText(
+                "Hands: None" if hands == 0 else "Hands: 1 detected" if hands == 1 else "Hands: 2 detected"
+            )
 
     def _tick(self):
         events, frame = self.worker.tick()
@@ -964,9 +1013,9 @@ def _parse_args(argv):
     parser.add_argument("--destructive-threshold", type=float, default=thresholds_defaults.destructive)
     parser.add_argument("--hold-seconds", type=float, default=timing_defaults.alphabet_hold)
     parser.add_argument("--custom-hold-seconds", type=float, default=timing_defaults.custom_hold)
-    parser.add_argument("--destructive-hold-seconds", type=float, default=timing_defaults.destructive_hold)
+    parser.add_argument("--destructive-hold-seconds", type=float, default=0.75)
     parser.add_argument("--cooldown-seconds", type=float, default=timing_defaults.cooldown)
-    parser.add_argument("--destructive-cooldown-seconds", type=float, default=timing_defaults.destructive_cooldown)
+    parser.add_argument("--destructive-cooldown-seconds", type=float, default=0.90)
     parser.add_argument("--smoke-test", action="store_true", help="Verify native window and model in a child without a camera")
     parser.add_argument("--smoke-report", type=Path, help="Write smoke-test JSON to this path")
     args = parser.parse_args(argv)

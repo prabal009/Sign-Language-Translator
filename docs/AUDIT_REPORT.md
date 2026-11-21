@@ -88,7 +88,9 @@ A second full-codebase audit after the initial stabilization pass identified and
 
 ### Recorded automated & RealSign evaluation evidence
 
-- **Lint & tests**: `ruff check .` passed with 0 issues; `QT_QPA_PLATFORM=offscreen pytest -q --require-real-model` passed **133/133** tests (including `test_pinned_pipeline_properties_and_probability_parity` against verified SignSpeak `1.0.0-realsign`).
+- **Lint & tests**: `ruff check .` passed with 0 issues; `QT_QPA_PLATFORM=offscreen pytest -q --require-real-model` passed **136/136** tests (including `test_pinned_pipeline_properties_and_probability_parity` against verified SignSpeak `1.0.0-realsign`, duplicate-handedness recovery, geometric custom commands, and UI tests).
+- **Live-config two-hand, side-angle & geometric-command benchmark (260 RealSign `Testing/` images, 10/letter)**:
+  - Lowering live MediaPipe detection/tracking confidence (`0.50 → 0.30`) + resolving duplicate handedness raised detections to **256/260 (98.5%)**, two-hand frames from **131 → 150**, and accepted A–Z accuracy to **226/260 (86.9%)** with **0 / 260** false positives across all five geometric commands (`0`, `1`, `SPACE`, `BACKSPACE`, `CLEAR_WORD`).
 - **App smoke test**: `QT_QPA_PLATFORM=offscreen python app.py --smoke-test` exited `0` (`ok: true`, `label: "Q"`, `confidence: 0.4316879803614582`, `slot: "swapped"`, `mediapipe_initialized: true`, `camera_opened: false`).
 - **RealSign offline evaluation (`utils.evaluate_signspeak` on verified `Dataset.zip`, 78 unique `Testing/` samples, 3/letter)**:
   - Reference parity: **6/6 passed**.
